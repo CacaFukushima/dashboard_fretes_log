@@ -180,7 +180,7 @@ fig.add_trace(go.Table(
             df['PAGAMENTO'], # <--- Aqui entra o dado real do seu Excel
             df['SCORE_FINAL'].apply(lambda x: f"{x:.1f}")
         ],
-        fill_color=[['#1c4d32' if t == campea else '#2c2c2c' for t in df['TRANSPORTADORA']] * 5],
+        fill_color=[["#311c4d" if t == campea else '#2c2c2c' for t in df['TRANSPORTADORA']] * 5],
         font=dict(color='white', size=11), align='left', height=30
     )
 ), row=2, col=1)
