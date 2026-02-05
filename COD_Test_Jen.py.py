@@ -134,7 +134,7 @@ st.success(f"🏆 Melhor Escolha: **{campea}**")
 st.info(gerar_texto_ia(df, campea, peso_preco), icon="🤖")
 
 # Cores (Verde para campeã, Azul para o resto)
-cores = ['#00C851' if t == campea else '#1f77b4' for t in df['TRANSPORTADORA']]
+cores = ["#0026FF" if t == campea else "#176196" for t in df['TRANSPORTADORA']]
 
 # ==============================================================================
 # 4. VISUALIZAÇÃO (VOLTANDO AO LAYOUT ORIGINAL)
