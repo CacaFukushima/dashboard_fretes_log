@@ -5,110 +5,139 @@ from plotly.subplots import make_subplots
 import os
 
 # ==============================================================================
-# 1. CONFIGURAÇÃO DA PÁGINA
+# 1. CONFIGURAÇÃO (VISUAL ORIGINAL QUE VOCÊ GOSTOU)
 # ==============================================================================
 st.set_page_config(layout="wide", page_title="Dashboard Logístico")
 
-st.title("🚛 DASHBOARD DE DECISÃO DA LOGÍSTICA")
+st.title("🚛 Dashboard de Decisão Logística")
 st.markdown("Sistema de Pontuação de Eficiência (Nota 0 a 100).")
 
 # --- BARRA LATERAL ---
-st.sidebar.header("⚖️ Ajuste de Prioridade")
+st.sidebar.header("⚖️ Painel de Controle")
 
 prioridade_usuario = st.sidebar.slider(
-    "O que é mais importante?",
-    min_value=0,
-    max_value=100,
-    value=50,
-    step=10,
-    format="%d%%",
-    help="0% = Só importa PRAZO | 100% = Só importa PREÇO"
+    "Defina a Prioridade:",
+    min_value=0, max_value=100, value=50, step=10, format="%d%%",
+    help="0% = Foco Total em PRAZO | 100% = Foco Total em PREÇO"
 )
 
-# Pesos (0.0 a 1.0)
 peso_preco = prioridade_usuario / 100
 peso_prazo = 1.0 - peso_preco
 
-st.sidebar.write(f"💰 Peso Preço: **{peso_preco*100:.0f}%**")
-st.sidebar.write(f"⏱️ Peso Prazo: **{peso_prazo*100:.0f}%**")
+st.sidebar.write(f"💰 Importância do Custo: **{peso_preco*100:.0f}%**")
+st.sidebar.write(f"⏱️ Importância do Prazo: **{peso_prazo*100:.0f}%**")
 
 # ==============================================================================
-# 2. CARREGAMENTO DOS DADOS
+# 2. CARREGAMENTO DOS DADOS (SEM DICIONÁRIOS FIXOS!)
 # ==============================================================================
-variaveis_pagamento = {
-    'BARRETOS TRANSPORTES': '15 DIAS (BOLETO)',
-    'FIEZA CARGAS': 'Á VISTA',
-    'GODI TRANSPORTES': '7 DIAS (BOLETO)'
-}
-
-try:
-    diretorio_script = os.path.dirname(os.path.abspath(__file__))
-except:
-    diretorio_script = os.getcwd()
-
-caminho_arquivo = os.path.join(diretorio_script, 'COTAÇÃO DE FRETE.xlsx')
+nome_arquivo_pc = 'COTAÇÃO DE FRETE.xlsx'
+nome_arquivo_nuvem = 'dados.xlsx'
 
 @st.cache_data
 def carregar_dados():
-    if not os.path.exists(caminho_arquivo):
+    # Detecta onde o arquivo está
+    if os.path.exists(nome_arquivo_nuvem): arquivo = nome_arquivo_nuvem
+    elif os.path.exists(nome_arquivo_pc): arquivo = nome_arquivo_pc
+    else: return None
+
+    try:
+        xls = pd.ExcelFile(arquivo)
+        
+        # --- LENDO VALORES E PAGAMENTO DIRETO DO EXCEL ---
+        df_v = pd.read_excel(xls, 'DADOS 1')
+        
+        # Limpeza básica de valores
+        df_v['VALOR'] = pd.to_numeric(df_v['VALOR'], errors='coerce')
+        df_v = df_v.dropna(subset=['VALOR', 'TRANSPORTADORA'])
+        df_v = df_v[df_v['VALOR'] > 0]
+        
+        # PROCURA A COLUNA DE PAGAMENTO AUTOMATICAMENTE
+        # (Aceita 'PAGAMENTO', 'CONDICAO', 'PAGTO', etc.)
+        coluna_pagamento = None
+        for col in df_v.columns:
+            if 'PAG' in col.upper() or 'COND' in col.upper():
+                coluna_pagamento = col
+                break
+        
+        # Se achou, renomeia para o padrão. Se não, cria vazia.
+        if coluna_pagamento:
+            df_v.rename(columns={coluna_pagamento: 'PAGAMENTO'}, inplace=True)
+        else:
+            df_v['PAGAMENTO'] = '-' # Preenche com traço se não achar
+            
+        # --- LENDO PRAZOS ---
+        df_p_raw = pd.read_excel(xls, 'DADOS 3', header=None)
+        df_p = df_p_raw[pd.to_numeric(df_p_raw[1], errors='coerce').notna()].copy()
+        df_p = df_p[[0, 1]]
+        df_p.columns = ['TRANSPORTADORA', 'PRAZO']
+        
+        # Padroniza Nomes (Remove espaços traidores)
+        df_v['TRANSPORTADORA'] = df_v['TRANSPORTADORA'].astype(str).str.strip()
+        df_p['TRANSPORTADORA'] = df_p['TRANSPORTADORA'].astype(str).str.strip()
+        
+        # Junta as tabelas
+        df = pd.merge(df_v, df_p, on='TRANSPORTADORA', how='inner')
+        return df
+    except:
         return None
-    xls = pd.ExcelFile(caminho_arquivo)
-    
-    # Valores
-    df_v = pd.read_excel(xls, 'DADOS 1')
-    df_v['VALOR'] = pd.to_numeric(df_v['VALOR'], errors='coerce')
-    df_v = df_v.dropna(subset=['VALOR', 'TRANSPORTADORA'])
-    df_v = df_v[df_v['VALOR'] > 10]
-    
-    # Prazos
-    df_p_raw = pd.read_excel(xls, 'DADOS 3', header=None)
-    df_p = df_p_raw[pd.to_numeric(df_p_raw[1], errors='coerce').notna()].copy()
-    df_p = df_p[[0, 1]]
-    df_p.columns = ['TRANSPORTADORA', 'PRAZO']
-    
-    # Merge
-    df = pd.merge(df_v, df_p, on='TRANSPORTADORA', how='inner')
-    df['TRANSPORTADORA'] = df['TRANSPORTADORA'].str.strip()
-    df['PAGAMENTO'] = df['TRANSPORTADORA'].map(variaveis_pagamento).fillna('A Combinar')
-    
-    return df
 
 df = carregar_dados()
 
-if df is None:
-    st.error(f"❌ Erro: Não achei o arquivo em: {caminho_arquivo}")
+# Se não carregar, mostra erro simples (sem travar tudo com código feio)
+if df is None or df.empty:
+    st.error("⚠️ Erro ao carregar. Verifique se o Excel está fechado e se os nomes das empresas são iguais nas abas.")
     st.stop()
 
 # ==============================================================================
-# 3. CÁLCULO DE SCORE (AGORA: MAIOR É MELHOR)
+# 3. CÁLCULO (LÓGICA CORRETA 0 a 100)
 # ==============================================================================
-# Lógica de Eficiência: (Melhor_Valor_Do_Mercado / Valor_Da_Empresa) * 100
-# Se a empresa tem o menor preço, a conta dá 1 * 100 = 100.
-# Se a empresa cobra o dobro, a conta dá 0.5 * 100 = 50.
-
 min_valor = df['VALOR'].min()
 min_prazo = df['PRAZO'].min()
 
+# Evita divisão por zero
+if min_valor == 0: min_valor = 1
+if min_prazo == 0: min_prazo = 1
+
+# Calcula Notas
 df['NOTA_PRECO'] = (min_valor / df['VALOR']) * 100
 df['NOTA_PRAZO'] = (min_prazo / df['PRAZO']) * 100
 
-# Média Ponderada das Notas
+# Score Final
 df['SCORE_FINAL'] = (df['NOTA_PRECO'] * peso_preco) + (df['NOTA_PRAZO'] * peso_prazo)
 
-# ORDENAÇÃO INVERTIDA: ascending=False (Do MAIOR para o MENOR)
+# Ordena do Melhor para o Pior
 df = df.sort_values('SCORE_FINAL', ascending=False)
 
-# Campeã é a primeira da lista (Maior Nota)
 campea = df.iloc[0]['TRANSPORTADORA']
-nota_campea = df.iloc[0]['SCORE_FINAL']
 
-st.success(f"🏆 Melhor Opção: **{campea}** (Eficiência: {nota_campea:.1f}/100)")
+# --- TEXTO DA IA (SIMPLES E DIRETO) ---
+def gerar_texto_ia(df, campea_nome, peso_preco):
+    row = df[df['TRANSPORTADORA'] == campea_nome].iloc[0]
+    media_v = df['VALOR'].mean()
+    media_p = df['PRAZO'].mean()
+    diff_v = media_v - row['VALOR']
+    diff_p = media_p - row['PRAZO']
+    
+    txt = f"**Análise de Decisão:** A transportadora **{campea_nome}** é a recomendação (Eficiência {row['SCORE_FINAL']:.1f}).\n\n"
+    
+    if peso_preco >= 0.6:
+        txt += "🎯 **Motivo:** Foco em **Redução de Custos**. "
+        if diff_v > 0: txt += f"Economia de **R$ {diff_v:,.2f}** vs média."
+    elif peso_preco <= 0.4:
+        txt += "🎯 **Motivo:** Foco em **Agilidade**. "
+        if diff_p > 0: txt += f"Entrega **{int(diff_p)} dias** mais rápida que a média."
+    else:
+        txt += "🎯 **Motivo:** Melhor **Custo-Benefício** (Equilíbrio ideal)."
+    return txt
 
-# Cores: Verde para a campeã, Cinza para as outras
-cores_dinamicas = ["#002FFF" if t == campea else "#8a2929" for t in df['TRANSPORTADORA']]
+st.success(f"🏆 Melhor Escolha: **{campea}**")
+st.info(gerar_texto_ia(df, campea, peso_preco), icon="🤖")
+
+# Cores (Verde para campeã, Azul para o resto)
+cores = ['#00C851' if t == campea else '#1f77b4' for t in df['TRANSPORTADORA']]
 
 # ==============================================================================
-# 4. VISUALIZAÇÃO
+# 4. VISUALIZAÇÃO (VOLTANDO AO LAYOUT ORIGINAL)
 # ==============================================================================
 fig = make_subplots(
     rows=2, cols=2,
@@ -116,50 +145,45 @@ fig = make_subplots(
     row_heights=[0.5, 0.5],
     specs=[[{"type": "bar"}, {"type": "bar"}], 
            [{"type": "table", "colspan": 2}, None]], 
-    subplot_titles=(
-        "Custo (R$)", 
-        "Prazo (Dias)", 
-        "Ranking de Eficiência (Nota 0 a 100 - Maior é Melhor)"
-    )
+    subplot_titles=("Comparativo de Custos (R$)", "Comparativo de Prazos (Dias)", "Tabela Detalhada")
 )
 
-# Gráfico 1: Custo
+# Gráfico 1: Barras de Custo
 fig.add_trace(go.Bar(
     x=df['TRANSPORTADORA'], y=df['VALOR'],
-    text=df['VALOR'].apply(lambda x: f"R$ {x:,.2f}"), textposition='auto',
-    marker_color=cores_dinamicas,
+    text=df['VALOR'].apply(lambda x: f"R$ {x:,.0f}"), 
+    textposition='auto',
+    marker_color=cores,
     name='Custo'
 ), row=1, col=1)
 
-# Gráfico 2: Prazo
+# Gráfico 2: Barras de Prazo
 fig.add_trace(go.Bar(
     x=df['TRANSPORTADORA'], y=df['PRAZO'],
-    text=df['PRAZO'].apply(lambda x: f"{int(x)} dias"), textposition='auto',
-    marker_color=cores_dinamicas,
+    text=df['PRAZO'].apply(lambda x: f"{int(x)} dias"),
+    textposition='auto',
+    marker_color=cores,
     name='Prazo'
 ), row=1, col=2)
 
-# Tabela (Com Score Formatado)
+# Tabela (Agora com a coluna PAGAMENTO real do Excel!)
 fig.add_trace(go.Table(
     header=dict(
-        values=['TRANSPORTADORA', 'VALOR', 'PRAZO', 'PAGAMENTO', 'NOTA FINAL (0-100)'],
-        fill_color='black', font=dict(color='white', size=14)
+        values=['TRANSPORTADORA', 'VALOR', 'PRAZO', 'PAGAMENTO', 'NOTA FINAL'],
+        fill_color='black', font=dict(color='white', size=12), align='left'
     ),
     cells=dict(
         values=[
             df['TRANSPORTADORA'],
             df['VALOR'].apply(lambda x: f"R$ {x:,.2f}"),
             df['PRAZO'].apply(lambda x: f"{int(x)} dias"),
-            df['PAGAMENTO'],
-            df['SCORE_FINAL'].apply(lambda x: f"Nota {x:.1f}") # Formatado como Nota
+            df['PAGAMENTO'], # <--- Aqui entra o dado real do seu Excel
+            df['SCORE_FINAL'].apply(lambda x: f"{x:.1f}")
         ],
-        fill_color=[
-            ["#0002FF" if t == campea else "#181717" for t in df['TRANSPORTADORA']] * 5
-        ],
-        font=dict(color='white', size=12), height=30
+        fill_color=[['#1c4d32' if t == campea else '#2c2c2c' for t in df['TRANSPORTADORA']] * 5],
+        font=dict(color='white', size=11), align='left', height=30
     )
 ), row=2, col=1)
 
-fig.update_layout(template="plotly_dark", height=750, showlegend=False)
-
+fig.update_layout(template="plotly_dark", height=700, showlegend=False)
 st.plotly_chart(fig, use_container_width=True)
