@@ -5,7 +5,7 @@ from plotly.subplots import make_subplots
 import os
 
 # ==============================================================================
-# 1. CONFIGURAÇÃO (VISUAL ORIGINAL QUE VOCÊ GOSTOU)
+# 1. CONFIGURAÇÃO 
 # ==============================================================================
 st.set_page_config(layout="wide", page_title="Dashboard Logístico")
 
@@ -28,14 +28,13 @@ st.sidebar.write(f"💰 Importância do Custo: **{peso_preco*100:.0f}%**")
 st.sidebar.write(f"⏱️ Importância do Prazo: **{peso_prazo*100:.0f}%**")
 
 # ==============================================================================
-# 2. CARREGAMENTO DOS DADOS (SEM DICIONÁRIOS FIXOS!)
+# 2. CARREGAMENTO DOS DADOS (COM SUPER LIMPEZA)
 # ==============================================================================
 nome_arquivo_pc = 'COTAÇÃO DE FRETE.xlsx'
 nome_arquivo_nuvem = 'dados.xlsx'
 
 @st.cache_data
 def carregar_dados():
-    # Detecta onde o arquivo está
     if os.path.exists(nome_arquivo_nuvem): arquivo = nome_arquivo_nuvem
     elif os.path.exists(nome_arquivo_pc): arquivo = nome_arquivo_pc
     else: return None
@@ -43,37 +42,39 @@ def carregar_dados():
     try:
         xls = pd.ExcelFile(arquivo)
         
-        # --- LENDO VALORES E PAGAMENTO DIRETO DO EXCEL ---
+        # --- LENDO VALORES E PAGAMENTO ---
         df_v = pd.read_excel(xls, 'DADOS 1')
         
-        # Limpeza básica de valores
-        df_v['VALOR'] = pd.to_numeric(df_v['VALOR'], errors='coerce')
-        df_v = df_v.dropna(subset=['VALOR', 'TRANSPORTADORA'])
-        df_v = df_v[df_v['VALOR'] > 0]
-        
-        # PROCURA A COLUNA DE PAGAMENTO AUTOMATICAMENTE
-        # (Aceita 'PAGAMENTO', 'CONDICAO', 'PAGTO', etc.)
+        # Garante a coluna PAGAMENTO
         coluna_pagamento = None
         for col in df_v.columns:
             if 'PAG' in col.upper() or 'COND' in col.upper():
                 coluna_pagamento = col
                 break
         
-        # Se achou, renomeia para o padrão. Se não, cria vazia.
         if coluna_pagamento:
             df_v.rename(columns={coluna_pagamento: 'PAGAMENTO'}, inplace=True)
         else:
-            df_v['PAGAMENTO'] = '-' # Preenche com traço se não achar
+            df_v['PAGAMENTO'] = '-'
             
+        # 🚨 SUPER LIMPEZA DE VALORES (Tira R$, pontos e ajusta vírgulas) 🚨
+        df_v['VALOR'] = df_v['VALOR'].astype(str)
+        df_v['VALOR'] = df_v['VALOR'].str.replace('R$', '', regex=False).str.replace(' ', '', regex=False)
+        df_v['VALOR'] = df_v['VALOR'].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df_v['VALOR'] = pd.to_numeric(df_v['VALOR'], errors='coerce') # Agora sim vira número puro
+        
+        df_v = df_v.dropna(subset=['VALOR', 'TRANSPORTADORA'])
+        df_v = df_v[df_v['VALOR'] > 0]
+        
         # --- LENDO PRAZOS ---
         df_p_raw = pd.read_excel(xls, 'DADOS 3', header=None)
         df_p = df_p_raw[pd.to_numeric(df_p_raw[1], errors='coerce').notna()].copy()
         df_p = df_p[[0, 1]]
         df_p.columns = ['TRANSPORTADORA', 'PRAZO']
         
-        # Padroniza Nomes (Remove espaços traidores)
-        df_v['TRANSPORTADORA'] = df_v['TRANSPORTADORA'].astype(str).str.strip()
-        df_p['TRANSPORTADORA'] = df_p['TRANSPORTADORA'].astype(str).str.strip()
+        # 🚨 SUPER LIMPEZA DE NOMES (Força MAIÚSCULAS para bater 100%) 🚨
+        df_v['TRANSPORTADORA'] = df_v['TRANSPORTADORA'].astype(str).str.strip().str.upper()
+        df_p['TRANSPORTADORA'] = df_p['TRANSPORTADORA'].astype(str).str.strip().str.upper()
         
         # Junta as tabelas
         df = pd.merge(df_v, df_p, on='TRANSPORTADORA', how='inner')
@@ -83,34 +84,26 @@ def carregar_dados():
 
 df = carregar_dados()
 
-# Se não carregar, mostra erro simples (sem travar tudo com código feio)
 if df is None or df.empty:
-    st.error("⚠️ Erro ao carregar. Verifique se o Excel está fechado e se os nomes das empresas são iguais nas abas.")
+    st.error("⚠️ Erro ao cruzar os dados. Verifique a planilha.")
     st.stop()
 
 # ==============================================================================
-# 3. CÁLCULO (LÓGICA CORRETA 0 a 100)
+# 3. CÁLCULO E TEXTO DA IA
 # ==============================================================================
 min_valor = df['VALOR'].min()
 min_prazo = df['PRAZO'].min()
 
-# Evita divisão por zero
 if min_valor == 0: min_valor = 1
 if min_prazo == 0: min_prazo = 1
 
-# Calcula Notas
 df['NOTA_PRECO'] = (min_valor / df['VALOR']) * 100
 df['NOTA_PRAZO'] = (min_prazo / df['PRAZO']) * 100
-
-# Score Final
 df['SCORE_FINAL'] = (df['NOTA_PRECO'] * peso_preco) + (df['NOTA_PRAZO'] * peso_prazo)
-
-# Ordena do Melhor para o Pior
 df = df.sort_values('SCORE_FINAL', ascending=False)
 
 campea = df.iloc[0]['TRANSPORTADORA']
 
-# --- TEXTO DA IA (SIMPLES E DIRETO) ---
 def gerar_texto_ia(df, campea_nome, peso_preco):
     row = df[df['TRANSPORTADORA'] == campea_nome].iloc[0]
     media_v = df['VALOR'].mean()
@@ -133,11 +126,10 @@ def gerar_texto_ia(df, campea_nome, peso_preco):
 st.success(f"🏆 Melhor Escolha: **{campea}**")
 st.info(gerar_texto_ia(df, campea, peso_preco), icon="🤖")
 
-# Cores (Verde para campeã, Azul para o resto)
-cores = ["#0026FF" if t == campea else "#176196" for t in df['TRANSPORTADORA']]
+cores = ['#00C851' if t == campea else '#1f77b4' for t in df['TRANSPORTADORA']]
 
 # ==============================================================================
-# 4. VISUALIZAÇÃO (VOLTANDO AO LAYOUT ORIGINAL)
+# 4. VISUALIZAÇÃO
 # ==============================================================================
 fig = make_subplots(
     rows=2, cols=2,
@@ -148,7 +140,6 @@ fig = make_subplots(
     subplot_titles=("Comparativo de Custos (R$)", "Comparativo de Prazos (Dias)", "Tabela Detalhada")
 )
 
-# Gráfico 1: Barras de Custo
 fig.add_trace(go.Bar(
     x=df['TRANSPORTADORA'], y=df['VALOR'],
     text=df['VALOR'].apply(lambda x: f"R$ {x:,.0f}"), 
@@ -157,7 +148,6 @@ fig.add_trace(go.Bar(
     name='Custo'
 ), row=1, col=1)
 
-# Gráfico 2: Barras de Prazo
 fig.add_trace(go.Bar(
     x=df['TRANSPORTADORA'], y=df['PRAZO'],
     text=df['PRAZO'].apply(lambda x: f"{int(x)} dias"),
@@ -166,7 +156,6 @@ fig.add_trace(go.Bar(
     name='Prazo'
 ), row=1, col=2)
 
-# Tabela (Agora com a coluna PAGAMENTO real do Excel!)
 fig.add_trace(go.Table(
     header=dict(
         values=['TRANSPORTADORA', 'VALOR', 'PRAZO', 'PAGAMENTO', 'NOTA FINAL'],
@@ -177,10 +166,10 @@ fig.add_trace(go.Table(
             df['TRANSPORTADORA'],
             df['VALOR'].apply(lambda x: f"R$ {x:,.2f}"),
             df['PRAZO'].apply(lambda x: f"{int(x)} dias"),
-            df['PAGAMENTO'], # <--- Aqui entra o dado real do seu Excel
+            df['PAGAMENTO'],
             df['SCORE_FINAL'].apply(lambda x: f"{x:.1f}")
         ],
-        fill_color=[["#1c2d4d" if t == campea else '#2c2c2c' for t in df['TRANSPORTADORA']] * 5],
+        fill_color=[['#1c4d32' if t == campea else '#2c2c2c' for t in df['TRANSPORTADORA']] * 5],
         font=dict(color='white', size=11), align='left', height=30
     )
 ), row=2, col=1)
